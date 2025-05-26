@@ -179,4 +179,4 @@ def change_password(db: Session, data: ChangePasswordSchema):
     user.password = hash_password(data.new_password)
     db.commit()
     db.refresh(user)
-    return {"message": "Password updated successfully"}
+    return {"message": "Password updated successfull"}
