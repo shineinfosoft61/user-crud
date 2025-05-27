@@ -1,18 +1,20 @@
 import bcrypt
-import os
-import json
+import os,traceback,json
 
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from jwcrypto import jwk, jwt
 from datetime import datetime, timedelta
+from jwcrypto.jwt import JWTExpired
+
 
 from models import UserModel
 from libs.utils import hash_password, now, get_user_by_id, get_user_by_email, object_as_dict,generate_otp,send_email
-from router.admin.v1.schemas import Useradd,UserUpdate,Login,ForgetPasswordSchema,ConfirmPasswordSchema,ChangePasswordSchema
+from router.admin.v1.schemas import Useradd,UserUpdate,Login,ForgetPassword,ConfirmPassword,ChangePassword,User
 from libs.utils import verify_password, hash_password
 load_dotenv()
+
 
 
 def get_all_users(
@@ -49,6 +51,7 @@ def get_user(db: Session, user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
 def create_user(db: Session, user: Useradd):
     existing_user = get_user_by_email(db,user.email)
     if existing_user:
@@ -65,6 +68,7 @@ def create_user(db: Session, user: Useradd):
     db.refresh(db_user)
     return db_user
 
+
 def update_user(db: Session, user_id: int, user: UserUpdate):
     db_user = get_user_by_id(db, user_id)
     if not db_user:
@@ -77,6 +81,7 @@ def update_user(db: Session, user_id: int, user: UserUpdate):
     db.refresh(db_user)
     return db_user
 
+
 def delete_user(db: Session, user_id: int):
     db_user = get_user_by_id(db, user_id)
     if not db_user:
@@ -84,7 +89,6 @@ def delete_user(db: Session, user_id: int):
     db_user.is_deleted = True
     db_user.updated_at = now()
     db.commit()
-
 
 
 def get_token(user_id: int, email: str):
@@ -101,7 +105,7 @@ def get_token(user_id: int, email: str):
     payload = {
         "id": user_id,
         "email": email,
-        "exp": int((datetime.utcnow() + timedelta(hours=1)).timestamp())
+        "exp": int((datetime.now() + timedelta(hours=1)).timestamp())
     }
 
     token = jwt.JWT(header={"alg": "HS256"}, claims=payload)
@@ -109,41 +113,54 @@ def get_token(user_id: int, email: str):
     return token.serialize()
 
 
-def sign_in(db: Session, user: Login):
-    db_user = get_user_by_email(db, user.email)
+def verify_token(db: Session, token: str):
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    try:
+        key = json.loads(os.getenv("JWT_KEY"))
+        jwk_key = jwk.JWK(**key)
+
+        decoded_token = jwt.JWT(key=jwk_key, jwt=token)
+        claims = json.loads(decoded_token.claims)
+
+        db_user = get_user_by_id(db, user_id=claims["id"])
+        if db_user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        return db_user
+
+    except JWTExpired as e:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception as e:
+        print("Error:", e)
+        print(traceback.format_exc())
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def sign_in(db: Session, data: Login):
+    db_user = get_user_by_email(db, data.email)
     if db_user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     hashed = db_user.password
     hashed = bytes(hashed, "utf-8")
-    password = bytes(user.password, "utf-8")
+    password = bytes(data.password, "utf-8")
     if not bcrypt.checkpw(password, hashed):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-    user = object_as_dict(db_user)
-    user["token"] = get_token(db_user.id, db_user.email)
-    return user
+    user_data = User.from_orm(db_user).dict()
+    user_data["access_token"] = get_token(db_user.id, db_user.email)
+    return user_data
 
 
-"""
-forget-password
-email
 
-
-/conform-forget-password
-
-enail
-otp
-password
-"""
-
-
-def forget_password(db: Session, data: ForgetPasswordSchema):
+def forget_password(db: Session, data: ForgetPassword):
     user = get_user_by_email(db, data.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     otp = generate_otp()
     user.otp = otp
-    user.updated_at = now()
+    user.opt_updated_at = now()
     db.commit()
 
     send_email(
@@ -153,13 +170,14 @@ def forget_password(db: Session, data: ForgetPasswordSchema):
     )
     return {"message": "OTP sent to your email"}
 
-def confirm_forget_password(db: Session, data: ConfirmPasswordSchema):
+
+def confirm_forget_password(db: Session, data: ConfirmPassword):
     user = get_user_by_email(db, data.email)
 
     if not user or user.otp != data.otp:
         raise HTTPException(status_code=400, detail="Invalid email or OTP")
 
-    if  datetime.now() > user.updated_at + timedelta(minutes=10):
+    if  datetime.now() > user.opt_updated_at + timedelta(minutes=10):
         raise HTTPException(status_code=400, detail="OTP has expired")
     
     user.password = hash_password(data.password)
@@ -168,15 +186,11 @@ def confirm_forget_password(db: Session, data: ConfirmPasswordSchema):
     return {"message": "Password reset successful"}
 
 
-def change_password(db: Session, data: ChangePasswordSchema):
-    user = get_user_by_email(db, data.email)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if not verify_password(data.old_password, user.password):
+def change_password(db: Session, data: ChangePassword, user_obj: str):    
+    if not verify_password(data.old_password, user_obj.password):
         raise HTTPException(status_code=400, detail="Incorrect old password")
 
-    user.password = hash_password(data.new_password)
+    user_obj.password = hash_password(data.new_password)
     db.commit()
-    db.refresh(user)
+    db.refresh(user_obj)
     return {"message": "Password update successfull"}
