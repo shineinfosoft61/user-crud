@@ -33,8 +33,8 @@ class UserList(BaseModel):
         from_attributes = True
 
 
-class Token(BaseModel):
-    token: str
+class LoginResponse(User):
+    access_token: str
 
     class Config:
         from_attributes = True
@@ -45,16 +45,16 @@ class Login(BaseModel):
     password: str = Field(..., min_length=3, max_length=50)
 
 
-class ForgetPasswordSchema(BaseModel):
+class ForgetPassword(BaseModel):
     email: EmailStr = Field(..., max_length=100)
 
-class ConfirmPasswordSchema(BaseModel):
+
+class ConfirmPassword(BaseModel):
     email: EmailStr = Field(..., max_length=100)
     otp: str = Field(..., min_length=6)
     password: str = Field(..., min_length=3, max_length=50)
 
 
-class ChangePasswordSchema(BaseModel):
-    email: EmailStr = Field(..., max_length=100)
+class ChangePassword(BaseModel):
     old_password: str = Field(..., min_length=3, max_length=50)
     new_password: str = Field(..., min_length=3, max_length=50)

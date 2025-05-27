@@ -16,4 +16,4 @@ class UserModel(Base):
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now)
     otp = Column(String(10))
-                          
+    opt_updated_at = Column(DateTime,default=datetime.now)
