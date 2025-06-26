@@ -13,6 +13,8 @@ from models import UserModel
 from libs.utils import hash_password, now, get_user_by_id, get_user_by_email, object_as_dict,generate_otp,send_email
 from router.admin.v1.schemas import Useradd,UserUpdate,Login,ForgetPassword,ConfirmPassword,ChangePassword,User
 from libs.utils import verify_password, hash_password
+from router.admin.v1.crud.cities import get_city_by_id
+
 load_dotenv()
 
 
@@ -23,7 +25,8 @@ def get_all_users(
     limit: int,
     search: str,
     sort_by: str,
-    sort_order: str
+    order: str,
+    city_id: int
 ):
     query = db.query(UserModel).filter(UserModel.is_deleted == False)
     if search:
@@ -31,13 +34,14 @@ def get_all_users(
             UserModel.name.ilike(f"%{search}%") |
             UserModel.email.ilike(f"%{search}%")
         )
-
+    if city_id:
+        query = query.filter(UserModel.city_id == city_id)
     if sort_by == "created_at":
-        query = query.order_by(UserModel.created_at.desc() if sort_order == "desc" else UserModel.created_at.asc())
+        query = query.order_by(UserModel.created_at.desc() if order == "desc" else UserModel.created_at.asc())
     elif sort_by == "name":
-        query = query.order_by(UserModel.name.desc() if sort_order == "desc" else UserModel.name.asc())
+        query = query.order_by(UserModel.name.desc() if order == "desc" else UserModel.name.asc())
     elif sort_by == "email":
-        query = query.order_by(UserModel.email.desc() if sort_order == "desc" else UserModel.email.asc())
+        query = query.order_by(UserModel.email.desc() if order == "desc" else UserModel.email.asc())
 
     total = query.count()
     results = query.offset(start).limit(limit).all()
@@ -57,11 +61,16 @@ def create_user(db: Session, user: Useradd):
     if existing_user:
         raise HTTPException(status_code=status.HTTP_406_NOT_ACCEPTABLE, detail="User already exists")
 
+    city_id = get_city_by_id(db, user.city_id)
+    if not city_id:
+        raise HTTPException(status_code=404, detail="City Not Found")
+
     db_user = UserModel(
         name=user.name,
         email=user.email,
         dob=user.dob,
-        password=hash_password(user.password)
+        password=hash_password(user.password),
+        city_id = user.city_id
     )
     db.add(db_user)
     db.commit()
@@ -77,6 +86,7 @@ def update_user(db: Session, user_id: int, user: UserUpdate):
     db_user.name = user.name
     db_user.dob = user.dob
     db_user.updated_at = now()
+    db_user.city_id = user.city_id
     db.commit()
     db.refresh(db_user)
     return db_user
